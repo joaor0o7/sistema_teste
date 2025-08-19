@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:sistema_comercio_2/modules/estoque/produtos/controllers/produtos_controller.dart';
 import 'package:sistema_comercio_2/modules/estoque/produtos/models/produtos_model.dart';
-import 'package:sistema_comercio_2/modules/vendas/widgets/produto_item_venda.dart';
-import 'package:sistema_comercio_2/modules/vendas/widgets/produto_disponivel_item.dart';
 import 'package:sistema_comercio_2/modules/vendas/controller_vendas/vendas_controller.dart';
+import 'package:sistema_comercio_2/modules/vendas/widgets/produto_carrinho_item.dart';
+import 'package:sistema_comercio_2/modules/vendas/widgets/produto_disponivel_item.dart';
 import 'package:sistema_comercio_2/modules/vendas/widgets/finalizar_vendas_dialog.dart';
 import 'package:sistema_comercio_2/modules/vendas/page_vendas/fiado_page.dart';
-import 'package:sistema_comercio_2/modules/vendas/page_vendas/historico_vendas.dart';
 
 class VendasPage extends StatefulWidget {
   final ProdutosController produtosController;
@@ -25,7 +25,12 @@ class VendasPage extends StatefulWidget {
 class _VendasPageState extends State<VendasPage> {
   final Map<ProdutoModel, double> _produtosNaVenda = {};
   final TextEditingController _buscaController = TextEditingController();
-  List<ProdutoModel> _todosProdutos = [];
+  final NumberFormat _currencyFormat = NumberFormat.currency(
+    locale: 'pt_BR',
+    symbol: 'R\$',
+  );
+
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -35,19 +40,18 @@ class _VendasPageState extends State<VendasPage> {
   }
 
   Future<void> _carregarProdutos() async {
-    final produtos = await widget.produtosController.buscarProdutos();
-    setState(() {
-      _todosProdutos = produtos;
-    });
+    setState(() => _isLoading = true);
+    await widget.produtosController.buscarProdutos();
+    setState(() => _isLoading = false);
   }
 
   void _adicionarProduto(ProdutoModel produto, double quantidade) {
     setState(() {
-      if (_produtosNaVenda.containsKey(produto)) {
-        _produtosNaVenda[produto] = (_produtosNaVenda[produto]! + quantidade);
-      } else {
-        _produtosNaVenda[produto] = quantidade;
-      }
+      _produtosNaVenda.update(
+        produto,
+        (qtd) => qtd + quantidade,
+        ifAbsent: () => quantidade,
+      );
       produto.quantidade -= quantidade.toInt();
     });
   }
@@ -59,67 +63,64 @@ class _VendasPageState extends State<VendasPage> {
     });
   }
 
+  void _editarQuantidade(ProdutoModel produto) {
+    final controller = TextEditingController(
+      text: _produtosNaVenda[produto]?.toStringAsFixed(2) ?? '',
+    );
+    showDialog(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: Text('Editar quantidade de ${produto.nome}'),
+            content: TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Quantidade em ${produto.unidadeMedida}',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final novaQtd = double.tryParse(controller.text);
+                  if (novaQtd != null && novaQtd >= 0) {
+                    setState(() {
+                      final diff = novaQtd - _produtosNaVenda[produto]!;
+                      produto.quantidade -= diff.toInt();
+                      _produtosNaVenda[produto] = novaQtd;
+                    });
+                    Navigator.pop(context);
+                  }
+                },
+                child: const Text('Salvar'),
+              ),
+            ],
+          ),
+    );
+  }
+
   void _limparCarrinho() {
     setState(() {
-      _produtosNaVenda.forEach((produto, qtd) {
-        produto.quantidade += qtd.toInt();
-      });
+      _produtosNaVenda.forEach(
+        (produto, qtd) => produto.quantidade += qtd.toInt(),
+      );
       _produtosNaVenda.clear();
     });
   }
 
-  void _editarQuantidade(ProdutoModel produto) {
-    final TextEditingController qtdController = TextEditingController(
-      text: _produtosNaVenda[produto]?.toStringAsFixed(2) ?? '',
-    );
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('Editar quantidade de ${produto.nome}'),
-          content: TextField(
-            controller: qtdController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: 'Quantidade em ${produto.unidadeMedida}',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final novaQtd = double.tryParse(qtdController.text);
-                if (novaQtd != null && novaQtd >= 0) {
-                  setState(() {
-                    final atual = _produtosNaVenda[produto]!;
-                    final diff = novaQtd - atual;
-                    produto.quantidade -= diff.toInt();
-                    _produtosNaVenda[produto] = novaQtd;
-                  });
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('Salvar'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   double _calcularTotal() {
-    return _produtosNaVenda.entries.fold(0, (total, entry) {
-      final produto = entry.key;
-      final quantidade = entry.value;
+    return _produtosNaVenda.entries.fold(0.0, (total, entry) {
       return total +
           widget.vendasController.calcularPrecoProporcional(
-            produto.precoVenda,
-            quantidade,
-            produto,
+            entry.key.precoVenda,
+            entry.value,
+            entry.key,
           );
     });
   }
@@ -127,11 +128,11 @@ class _VendasPageState extends State<VendasPage> {
   @override
   Widget build(BuildContext context) {
     final produtosDisponiveis =
-        _todosProdutos
+        widget.produtosController.produtos
             .where(
-              (produto) =>
-                  produto.quantidade > 0 &&
-                  produto.nome.toLowerCase().contains(
+              (p) =>
+                  p.quantidade > 0 &&
+                  p.nome.toLowerCase().contains(
                     _buscaController.text.toLowerCase(),
                   ),
             )
@@ -143,12 +144,13 @@ class _VendasPageState extends State<VendasPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.attach_money),
-            onPressed: () {
+            onPressed: () async {
+              await widget.vendasController.carregarHistoricoCompleto();
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder:
-                      (context) =>
+                      (_) =>
                           FiadosPage(vendasController: widget.vendasController),
                 ),
               );
@@ -160,121 +162,121 @@ class _VendasPageState extends State<VendasPage> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _buscaController,
-              decoration: const InputDecoration(
-                hintText: 'Buscar produto...',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-            const Text('Produtos disponíveis:'),
-            Expanded(
-              child: ListView.builder(
-                itemCount: produtosDisponiveis.length,
-                itemBuilder: (context, index) {
-                  final produto = produtosDisponiveis[index];
-                  return ProdutoDisponivelItem(
-                    produto: produto,
-                    onAdicionar: (qtd) => _adicionarProduto(produto, qtd),
-                  );
-                },
-              ),
-            ),
-            const Divider(),
-            const Text('Carrinho:'),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _produtosNaVenda.length,
-                itemBuilder: (context, index) {
-                  final produto = _produtosNaVenda.keys.elementAt(index);
-                  final quantidade = _produtosNaVenda[produto]!;
-                  final preco = widget.vendasController
-                      .calcularPrecoProporcional(
-                        produto.precoVenda,
-                        quantidade,
-                        produto,
-                      );
-                  return ListTile(
-                    title: Text(produto.nome),
-                    subtitle: Text(
-                      '${quantidade.toStringAsFixed(2)} ${produto.unidadeMedida} x R\$ ${produto.precoVenda.toStringAsFixed(2)}',
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _buscaController,
+                      decoration: const InputDecoration(
+                        hintText: 'Buscar produto...',
+                        prefixIcon: Icon(Icons.search),
+                      ),
                     ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    const SizedBox(height: 16),
+                    const Text('Produtos disponíveis:'),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: produtosDisponiveis.length,
+                        itemBuilder: (context, index) {
+                          final produto = produtosDisponiveis[index];
+                          return ProdutoDisponivelItem(
+                            produto: produto,
+                            onAdicionar:
+                                (qtd) => _adicionarProduto(produto, qtd),
+                          );
+                        },
+                      ),
+                    ),
+                    const Divider(),
+                    const Text('Carrinho:'),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _produtosNaVenda.length,
+                        itemBuilder: (context, index) {
+                          final produto = _produtosNaVenda.keys.elementAt(
+                            index,
+                          );
+                          final quantidade = _produtosNaVenda[produto]!;
+                          final subtotal = widget.vendasController
+                              .calcularPrecoProporcional(
+                                produto.precoVenda,
+                                quantidade,
+                                produto,
+                              );
+                          return ProdutoCarrinhoItem(
+                            produto: produto,
+                            quantidade: quantidade.toInt(),
+                            onRemover: () => _removerProduto(produto),
+                            onEditarQuantidade:
+                                () => _editarQuantidade(produto),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Total: ${_currencyFormat.format(_calcularTotal())}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
                       children: [
-                        IconButton(
-                          icon: const Icon(Icons.edit),
-                          onPressed: () => _editarQuantidade(produto),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder:
+                                    (_) => FinalizarVendaDialog(
+                                      total: _calcularTotal(),
+                                      onConfirmar: (
+                                        formaPagamento,
+                                        nomeCliente,
+                                        desconto,
+                                      ) {
+                                        widget.vendasController.salvarVenda(
+                                          produtos: _produtosNaVenda,
+                                          total: _calcularTotal() - desconto,
+                                          formaPagamento: formaPagamento,
+                                          nomeCliente: nomeCliente,
+                                        );
+                                        _limparCarrinho();
+                                        _carregarProdutos();
+                                        Navigator.pop(context);
+                                      },
+                                    ),
+                              );
+                            },
+                            child: const Text('Finalizar Venda'),
+                          ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete),
-                          onPressed: () => _removerProduto(produto),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Funcionalidade de Nota Fiscal ainda não disponível.',
+                                  ),
+                                ),
+                              );
+                            },
+                            child: const Text('Emitir Nota Fiscal'),
+                          ),
                         ),
-                        Text('R\$ ${preco.toStringAsFixed(2)}'),
                       ],
                     ),
-                  );
-                },
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Total: R\$ ${_calcularTotal().toStringAsFixed(2)}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                ElevatedButton(
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder:
-                          (context) => FinalizarVendaDialog(
-                            total: _calcularTotal(),
-                            onConfirmar: (
-                              formaPagamento,
-                              nomeCliente,
-                              desconto,
-                            ) {
-                              widget.vendasController.salvarVenda(
-                                produtos: _produtosNaVenda,
-                                total: _calcularTotal() - desconto,
-                                formaPagamento: formaPagamento,
-                                nomeCliente: nomeCliente,
-                              );
-                              _limparCarrinho();
-                              Navigator.pop(context);
-                            },
-                          ),
-                    );
-                  },
-                  child: const Text('Finalizar Venda'),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Funcionalidade de Nota Fiscal ainda não disponível.',
-                        ),
-                      ),
-                    );
-                  },
-                  child: const Text('Emitir Nota Fiscal'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

@@ -1,12 +1,13 @@
+import 'dart:convert';
 import 'package:sistema_comercio_2/modules/estoque/produtos/models/produtos_model.dart';
 
 class VendaModel {
   int? id;
-  Map<ProdutoModel, double> produtos; // Remova o 'final' daqui
+  Map<ProdutoModel, double> produtos;
   double total;
-  final String formaPagamento;
-  final String nomeCliente;
-  final DateTime dataHora;
+  String formaPagamento;
+  String nomeCliente;
+  DateTime dataHora;
   bool isPago;
 
   VendaModel({
@@ -19,36 +20,44 @@ class VendaModel {
     this.isPago = false,
   });
 
-  // Converte para Map para inserir no banco
   Map<String, dynamic> toMap() {
-    // Converter DateTime para String no formato ISO 8601
-    String dataHoraString = dataHora.toIso8601String();
-    int isPagoInt = isPago ? 1 : 0;
-
     return {
       'id': id,
-      'data': dataHoraString,
       'total': total,
       'formaPagamento': formaPagamento,
       'nomeCliente': nomeCliente,
-      'isPago': isPagoInt,
+      'dataHora': dataHora.toIso8601String(),
+      'isPago': isPago ? 1 : 0,
+      'produtos': jsonEncode(
+        produtos.map((produto, qtd) => MapEntry(produto.codigo, qtd)),
+      ),
     };
   }
 
-  // Construtor a partir de Map do banco
   factory VendaModel.fromMap(Map<String, dynamic> map) {
-    // Converter String de volta para DateTime
-    DateTime dataHora = DateTime.parse(map['data']);
-    bool isPago = map['isPago'] == 1 ? true : false;
-
     return VendaModel(
-      id: map['id'],
-      produtos: {}, // Inicializado vazio, será preenchido em VendaDao
-      total: map['total'],
-      formaPagamento: map['formaPagamento'],
-      nomeCliente: map['nomeCliente'],
-      dataHora: dataHora,
-      isPago: isPago,
+      id: map['id'] as int?,
+      total: (map['total'] as num).toDouble(),
+      formaPagamento: map['formaPagamento'] ?? '',
+      nomeCliente: map['nomeCliente'] ?? '',
+      dataHora: DateTime.parse(map['dataHora']),
+      isPago: (map['isPago'] ?? 0) == 1,
+      produtos:
+          map['produtos'] != null
+              ? (jsonDecode(map['produtos']) as Map<String, dynamic>).map(
+                (codigo, qtd) => MapEntry(
+                  ProdutoModel(
+                    codigo: codigo,
+                    nome: '',
+                    precoVenda: 0,
+                    precoCusto: 0,
+                    quantidade: 0,
+                    unidadeMedida: '',
+                  ),
+                  (qtd as num).toDouble(),
+                ),
+              )
+              : {},
     );
   }
 }
